@@ -1,0 +1,3 @@
+[submodule "themes/xmag"]
+	path = themes/xmag
+	url = git@github.com:sharifanani/hugo-xmag.git
