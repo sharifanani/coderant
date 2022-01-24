@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    <title>Amplify | CodeRant</title>
+    <link rel="stylesheet" href="/css/style.css" />
+    <link rel="stylesheet" href="/css/fonts.css" />
+    <link href="//cdn.bootcss.com/highlight.js/9.12.0/styles/github.min.css" rel="stylesheet">
+
+  </head>
+
+  <body  class="page">
+    <nav class="header">
+      <div class="banner">
+<a href="/" class="text">
+ CodeRant
+</a>
+</div>
+
+      <div class="head-meta">
+      
+        <span><a href="/">&larr; Back to Home</a></span>
+        <span class="date">2021-12-29</span>
+        
+        
+        
+          
+        
+        
+        
+        
+      
+      </div>
+    </nav>
+
+<div class="container">
+<article>
+<div class="article-meta">
+
+  <div class="categories">
+  
+    <a href="/categories/aws">AWS</a>
+  
+     &hercon; <a href="/categories/amplify">Amplify</a>
+  
+  </div>
+
+  <h1><span class="title">Amplify</span></h1>
+
+  
+  <h3 class="author">Basel Anani
+</h3>
+  
+
+  
+  <p>Tags: <a href="/tags/markdown">Markdown</a>; <a href="/tags/"></a>
+  </p>
+  
+  
+
+</div>
+
+
+
+<main>
+<p><strong>Over the last couple of days,</strong> I decided to take a bit of a dive into AWS&rsquo;s Amplify service and see what exactly it had to offer in terms of creating and deploying a web-based application. As Amazon describes it, &ldquo;AWS Amplify is a set of purpose-built tools and features that lets frontend web and mobile developers quickly and easily build full-stack applications&rdquo;, so I was curious to see really how quick and easy this process was. For this article, we are going to be looking at implementing authentication using the tools the Amplify CLI provides, and try to gain understanding of what is going as we make use of it.</p>
+<p>The project I decided to use this for used an Angular front-end. As for the backend services. The goal was to use as many of the services as possible provided in the Amplify ecosystem. Setting up amplify was simple enough. First, I needed to install the Amplify CLI via npm with <code>npm install -g @aws-amplify/cli</code> then run <code>amplify configure</code>, which provided a simple step-by-step guide to getting hooked up with my AWS account and creating an IAM user for Amplify to provision resources with.</p>
+<p>Once the initial set-up for the Amplify CLI was complete, running <code>amplify init</code> ran me through configuring the Amplify project for my desired front-end framework. The <code>amplify init</code> command provisions a few resources for you once the configuration is complete. It creates a CloudFormation stack for your project. Within the stack it also creates template roles (auth and unauth) to allow authenticated and unauthenticated users different access. Lastly, a deployment bucket in S3 is created. This deployment bucket contains some meta-data for your project as well the current backend configuration</p>
+<p>Probably one of the most common features seen in web-apps today is authentication of some form or another. Be it for e-commerce, social media, or other web app categories, chances are it&rsquo;s there. To begin setting up the auth, the command <code>amplify add auth</code> brings up another step-by-step output in the terminal to configure the authentication processs, including configuration for 3rd party providers like Facebook and Google. There is a default configuration that can be used for quick set-up, but for the purposes of this article, I decided to go down the manual configuration rabbit hole. I used default settings for user pool name, and selected authentication via email. I also requested that a user be asked to provide their full name. By default, new users receive an email with a verification code when creating a new user and AWS allows you to customize both the subject of that email and the body. You can also set parameters for passwords to have a certain level of complexity (length, special characters, upper and lowercase etc). Once all of the settings have been applied, the authentication resource is added locally. The <code>amplify push</code> command will take this resource and publish it in the cloud. Publishing will trigger a CREATE event in CloudFormation. This event includes the creation of a new User Pool for the application.</p>
+<p>Implementing the authentication in the frontend can be done either manually, or through the use of template components. AWS provides a ready to use Authenticator component which can be popped into your application with a simple import. I decided to take a look at what they had for Angular, making use of their Amplify-UI guide which can be found <a href="https://ui.docs.amplify.aws/getting-started/installation?platform=angular">here</a>. While it&rsquo;s quite easy to follow, I found that there were a couple things missing from the guide that would have saved me some headache along the way. After importing the fonts and configuring a polyfill, we move on to the Components section of the UI guide and select the Authenticator Component <a href="https://ui.docs.amplify.aws/components/authenticator?platform=angular">found here</a>. The docs do a good job highlighting the module import you need to add to your <code>app.module.ts</code> file but it&rsquo;s what is unhighlighted and not included that are key to getting this component to work. Asides from the import of the <code>AmplifyAuthenticatorModule</code>, an import of <code>aws-config from ../aws-exports</code> and an import of <code>Amplify from 'aws-amplify'</code> are also required. You will also need to add below the import statements <code>Amplify.configure(awsconfig);</code>. This part in particular was completely ommitted from the documentation. Failing to perform these steps before serving up your application will lead to an error about Amplify not being configured properly. Another important step to note, in your tsconfig.json, under the <code>compilerOptions</code> property, it is necessary to add <code>&quot;allowJS&quot;:true</code>, so that the aws-exports file can be read. A complete example of all the imports and statements needed to get the component functioning properly can be found in the snippets of <code>app.module.ts</code> and <code>tsconfig.json</code> below:</p>
+<h3 id="appmodulets">App.module.ts</h3>
+<pre><code class="language-javascript">import { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+
+import { AppRoutingModule } from './app-routing.module';
+import { AppComponent } from './app.component';
+
+//Amplify Imports
+import awsconfig from '../aws-exports';
+import Amplify from 'aws-amplify';
+import { AmplifyAuthenticatorModule } from '@aws-amplify/ui-angular';
+//Apply Amplify Configuratons
+Amplify.configure(awsconfig);
+
+@NgModule({
+  declarations: [
+    AppComponent
+  ],
+  imports: [
+    BrowserModule,
+    AppRoutingModule,
+    AmplifyAuthenticatorModule
+  ],
+  providers: [],
+  bootstrap: [AppComponent]
+})
+export class AppModule { }
+</code></pre>
+<h3 id="tsconfigjson">tsconfig.json</h3>
+<pre><code class="language-json">{
+  &quot;compileOnSave&quot;: false,
+  &quot;compilerOptions&quot;: {
+    &quot;allowJs&quot;: true, // Add this line here
+    &quot;baseUrl&quot;: &quot;./&quot;,
+    &quot;outDir&quot;: &quot;./dist/out-tsc&quot;,
+    &quot;forceConsistentCasingInFileNames&quot;: true,
+    &quot;strict&quot;: true,
+    ...
+}
+</code></pre>
+<p>Last but not least, we need to place our Authenticator component inside of our web-app&rsquo;s entry point, for Angular, that is going to be our <code>app.component.html</code> file. We can get rid of everything inside of that file from when we initialized the project and replace it with the following:</p>
+<h3 id="appcomponenthtml">app.component.html</h3>
+<pre><code class="language-html">&lt;amplify-authenticator&gt;
+  &lt;ng-template
+    amplifySlot=&quot;authenticated&quot;
+    let-user=&quot;user&quot;
+    let-signOut=&quot;signOut&quot;
+  &gt;
+    &lt;h1&gt;Welcome {{ user.username }}!&lt;/h1&gt;
+    &lt;button (click)=&quot;signOut()&quot;&gt;Sign Out&lt;/button&gt;
+  &lt;/ng-template&gt;
+&lt;/amplify-authenticator&gt;
+</code></pre>
+<p>The end result of all this should leave us with a fairly decent looking authentication screen, with options for login and sign-up when we finally <code>ng serve</code> the application. When we create our first user, we can navigate to the AWS console, go to Cognito, select our user pool, and find the user that we just created with statistics showing us if the user has been enabled, confirmed (via email), and when the user was created and last update.</p>
+<h3 id="final-thoughts">Final Thoughts</h3>
+<p>Getting the auth portion of this application set up was definitely easier than I expected. Considering the number of tasks that were handled (eg. email verification) in conjunction with the pre-built component it definitely took less time and provided me with more flexibility than I had initially anticipated. There were definitely some roadblocks along the way, especially with the frontend implentation and the docs neglecting a few important details. But overall, I never ran into an issue that simple, well-worded google search couldn&rsquo;t get me by.</p>
+
+</main>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<nav class="post-nav">
+  <span class="nav-prev"></span>
+  <span class="nav-next"><a href="/post/2017/02/14/a-plain-markdown-post/">A Plain Markdown Post &rarr;</a></span>
+</nav>
+
+
+
+</article>
+</div>
+
+<script async src="//yihui.org/js/center-img.js"></script>
+
+<footer>
+
+<div class="footer">
+  <ul class="menu">
+    
+    <li><a href="/"><span data-hover="Home">Home</span></a></li>
+    
+    <li><a href="/about/"><span data-hover="About">About</span></a></li>
+    
+    <li><a href="/categories/"><span data-hover="Categories">Categories</span></a></li>
+    
+    <li><a href="/tags/"><span data-hover="Tags">Tags</span></a></li>
+    
+    <li><a href="/index.xml"><span data-hover="Subscribe">Subscribe</span></a></li>
+    
+  </ul>
+  
+  <div class="copyright">© Sharif Anani &amp; Basel Anani 2021 | <a href="https://github.com/sharifanani">Github</a></div>
+  
+</div>
+</footer>
+
+
+
+
+<script src="//cdn.bootcss.com/highlight.js/9.12.0/highlight.min.js"></script>
+<script src="//cdn.bootcss.com/highlight.js/9.12.0/languages/r.min.js"></script>
+<script>
+hljs.configure({languages: []});
+hljs.initHighlightingOnLoad();
+</script>
+
+
+
+
+</body>
+</html>
+
