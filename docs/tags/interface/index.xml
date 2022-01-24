@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
-    <title>Home Page on CodeRant</title>
-    <link>/</link>
-    <description>Recent content in Home Page on CodeRant</description>
+    <title>Interface on CodeRant</title>
+    <link>/tags/interface/</link>
+    <description>Recent content in Interface on CodeRant</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Sun, 23 Jan 2022 00:00:00 +0000</lastBuildDate><atom:link href="/index.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Sun, 23 Jan 2022 00:00:00 +0000</lastBuildDate><atom:link href="/tags/interface/index.xml" rel="self" type="application/rss+xml" />
     <item>
       <title>Accept Interface, Return Concrete Type, But What About Slices?</title>
       <link>/post/2022/01/23/accept-interface-return-concrete-type-but-what-about-slices/</link>
@@ -15,18 +15,6 @@
       <guid>/post/2022/01/23/accept-interface-return-concrete-type-but-what-about-slices/</guid>
       <description>1. A Quick Introduction One of Go&amp;rsquo;s commonly known characteristics has long been the implicit satisfaction of interfaces. Implicitly satisfying interfaces can (and has been) useful in many situations, especially those around file and network I/O. This post isn&amp;rsquo;t here to change anyone&amp;rsquo;s opinion about this design choice, but rather to point out a small inconsistency I&amp;rsquo;ve recently noticed through my day-to-day encounters with the language.
 Although not explicitly a Go Proverb, &amp;ldquo;accept interfaces and return concrete types&amp;rdquo; has been is something I&amp;rsquo;ve heard many times throughout my short professional experience with the language.</description>
-    </item>
-    
-    <item>
-      <title>About The Authors</title>
-      <link>/about/</link>
-      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
-      
-      <guid>/about/</guid>
-      <description>XMag is the second Hugo theme I have designed. It is based on my first Hugo theme XMin, and similarly, features minimalism but with a magazine style on the homepage inspired by The Signpost on Wikipedia. You can find its source code on Github: https://github.com/yihui/hugo-xmag (licensed under MIT).
-Features This theme includes a few cool features:
-  Responsive article summary blocks on homepage
-  Thumbnails in summary blocks</description>
     </item>
     
   </channel>
