@@ -1,0 +1,9 @@
+version: "2"
+services:
+  backend:
+    container_name: example_backend
+    image: "coderant.dev/example_server:latest"
+    volumes:
+      - "./go/src:/app:ro"
+    ports:
+      - "9090:8080"
