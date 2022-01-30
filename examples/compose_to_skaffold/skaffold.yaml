@@ -8,6 +8,11 @@ build:
     context: go
     docker:
       dockerfile: Dockerfile
+    sync:
+      manual:
+        - src: 'src/*'
+          dest: /app/
+          strip: 'src/'
 deploy:
   kubectl:
     manifests:
