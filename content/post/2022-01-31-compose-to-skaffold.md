@@ -95,7 +95,7 @@ Awesome! We can move on with our lives noe
 To deploy the server using a container, we'll need to [install `docker`](https://docs.docker.com/engine/install/ubuntu/).
 Head over to https://docs.docker.com/engine/install/ubuntu/ and follow their instructions.
 
-Once installed, create the file `go/Dockerfile` with the following contents:
+Once installed, create the file `Dockerfile` with the following contents:
 ```dockerfile
 FROM docker.io/golang:stretch
 COPY ./src /app
@@ -109,18 +109,18 @@ Create the file `go/build-container.sh` with the contents
 ```shell
 #!/usr/bin/env bash
 
-docker build -t coderant.dev/example_server:latest .
-```
+docker build -t coderant.dev/example_server:latest ./go
+````
 
 We'll expand on this file a little later. For now, don't forget to make it executable
 ```shell
-chmod +x go/build-container.sh
+chmod +x build-container.sh
 ```
 
 To build the container:
 ```shell
 $ pwd
-/path/to/your/project/compose_to_skaffold/go
+/path/to/your/project/compose_to_skaffold
 $ ./build-container.sh
 Sending build context to Docker daemon  7.168kB
 Step 1/4 : FROM docker.io/golang:stretch
@@ -234,7 +234,7 @@ This is a simple adjustment in `build-container.sh`:
 ```shell
 #!/usr/bin/env bash
 set -e
-docker build -t coderant.dev/example_server:latest -t localhost:32000/example_server:latest .
+docker build -t coderant.dev/example_server:latest -t localhost:32000/example_server:latest ./go
 docker push localhost:32000/example_server:latest
 ```
 
@@ -267,7 +267,7 @@ spec:
     spec:
       containers:
       - name: example
-        image: localhost:32000/example_server
+        image: localhost:32000/example_server:latest
         resources:
           requests:
             memory: "32Mi"
@@ -333,17 +333,16 @@ If you don't want to use `k9s`, you can
 $ kubectl get pods -o json | grep ip
                         "ip": "10.1.150.168"
 ```
-It's faster, butonly about a quarter as cool. The choice is yours. If you have multiple pods, you'd have to do something like
+It's faster, but only about a quarter as cool. The choice is yours. If you have multiple pods, you'd have to do something like
 ```shell
 $ kubectl get pods
 NAME                                  READY   STATUS    RESTARTS   AGE
 example-deployment-7d975b57b5-fps46   1/1     Running   0          18m
-$ kubectl get pods example-deploym
-ent-7d975b57b5-fps46 -o json | grep ip
+$ kubectl get pods example-deployment-7d975b57b5-fps46 -o json | grep ip
                 "ip": "10.1.150.168"
 ```
 
-Alriiiight, we're cooking with gas now! Clean after yourself and run
+Alriiiight, we're cooking with gas now! Clean up after yourself and run
 ```shell
 $ kubectl delete -f manifest.yaml
 ```
@@ -432,10 +431,15 @@ $ kubectl delete -f manifest.yaml
 ```
 This whole `kubectl apply` then `kubectl delete` business is getting old, isn't it?
 
-## Live refresh and dev workflow with Skaffold
-Step 1: [Install skaffold](https://skaffold.dev/docs/install/#standalone-binary)
+Before moving forward, let's clean up the microk8s registry by running the folllowing command:
 
-Step 2: Add `skaffold.yaml` next to your `manifest.yaml`
+```shell
+$ microk8s ctr image rm $(microk8s ctr image ls name~="example" -q)
+```
+
+## Live refresh and dev workflow with Skaffold
+Start by [installing skaffold](https://skaffold.dev/docs/install/#standalone-binary).
+When done, create `skaffold.yaml` right next to your `manifest.yaml`
 ```yaml
 apiVersion: skaffold/v2beta26
 kind: Config
@@ -443,24 +447,131 @@ metadata:
   name: compose-to-skaffold
 build:
   artifacts:
-  - image: localhost:32000/example_server
-    context: go
-    docker:
-      dockerfile: Dockerfile
-    sync:
-      manual:
-        - src: 'src/*'
-          dest: /app/
-          strip: 'src/'
+    - image: localhost:32000/example_server
+      context: go
+      custom:
+        buildCommand: ../build-container.sh
 deploy:
   kubectl:
     manifests:
-    - manifest.yaml
+      - manifest.yaml
 ```
 
-Step 3: From the same directory as `skaffold.yaml`, run
+Notice a couple of things here:
+* we're not using a tag with the docker image
+* the `build-container.sh` script is specified relative to the `context` specified
+
+For this to work, we need our build script to honor [contract that skaffold expects to be honored](https://skaffold.dev/docs/pipeline-stages/builders/custom/#contract-between-skaffold-and-custom-build-script)
+
+*imagine a non-copyright-protected image of a gangster pounding his chest and nodding here*
+
+^ I don't know much about copyright law. Anyway, I digress.
+
+The new and improved `build-container.sh` should look like the following:
 ```shell
-skaffold dev
+#!/usr/bin/env bash
+set -ex
+docker build -t coderant.dev/example_server:latest -t "$IMAGE" "$BUILD_CONTEXT"
+if [ "$PUSH_IMAGE" = true ]; then
+  docker push "$IMAGE"
+fi
 ```
 
-Step 4: Profit
+When you're done, go ahead and run `skaffold dev` to start things up!
+
+```shell
+$ skaffold dev
+Listing files to watch...
+ - localhost:32000/example_server
+Generating tags...
+ - localhost:32000/example_server -> localhost:32000/example_server:bb61adf-dirty
+Checking cache...
+ - localhost:32000/example_server: Not found. Building
+Starting build...
+Building [localhost:32000/example_server]...
++ docker build -t coderant.dev/example_server:latest -t localhost:32000/example_server:bb61adf-dirty <path-to-context>
+Sending build context to Docker daemon  6.144kB
+Step 1/4 : FROM docker.io/golang:stretch
+ ---> 9e153dc8839b
+Step 2/4 : COPY ./src /app
+ ---> Using cache
+ ---> 369aa40461c7
+Step 3/4 : WORKDIR /app/
+ ---> Using cache
+ ---> 142a6f7626a9
+Step 4/4 : CMD go run main.go -ip 0.0.0.0 -port 8080
+ ---> Using cache
+ ---> 6d23ab99103e
+Successfully built 6d23ab99103e
+Successfully tagged coderant.dev/example_server:latest
+Successfully tagged localhost:32000/example_server:bb61adf-dirty
++ '[' true = true ']'
++ docker push localhost:32000/example_server:bb61adf-dirty
+The push refers to repository [localhost:32000/example_server]
+907483c1f563: Preparing
+c7bbd574971a: Preparing
+eefed195ceec: Preparing
+58f0ebb0cceb: Preparing
+76ce09dad18e: Preparing
+9aee2e50701e: Preparing
+678c62bc4ece: Preparing
+d05b8af4c7ce: Preparing
+9aee2e50701e: Waiting
+678c62bc4ece: Waiting
+d05b8af4c7ce: Waiting
+907483c1f563: Layer already exists
+58f0ebb0cceb: Layer already exists
+eefed195ceec: Layer already exists
+678c62bc4ece: Layer already exists
+c7bbd574971a: Layer already exists
+d05b8af4c7ce: Layer already exists
+9aee2e50701e: Layer already exists
+76ce09dad18e: Layer already exists
+bb61adf-dirty: digest: sha256:9370b9ae1f92f79ceb4044b6756f8e37a6ca8fd0062c188091a1e0ecf06003b7 size: 2003
+Tags used in deployment:
+ - localhost:32000/example_server -> localhost:32000/example_server:bb61adf-dirty@sha256:9370b9ae1f92f79ceb4044b6756f8e37a6ca8fd0062c188091a1e0ecf06003b7
+Starting deploy...
+ - deployment.apps/example-deployment created
+ - service/example-backend-service created
+ - ingress.networking.k8s.io/example-backend-ingress created
+Waiting for deployments to stabilize...
+ - deployment/example-deployment is ready.
+Deployments stabilized in 2.111 seconds
+Press Ctrl+C to exit
+Watching for changes...
+[example] 2022/02/03 03:16:26 listening on: 0.0.0.0:8080
+```
+
+In another terminal, do your `curl` thing!
+```shell
+$ curl example-backend.local:8080/hello
+Hello there!⏎
+```
+
+Now, change something your `main.go`, and you'll notice that `skaffold` build and redeploys for you!
+
+## Getting rid of docker once and for all
+
+The final thing we should do now is get rid of docker!
+
+To do that, head over to https://podman.io/getting-started/installation and follow their instructions.
+When done, update `build-container.sh` by replacing `docker` with `podman` everywhere:
+
+```shell
+#!/usr/bin/env bash
+set -e
+podman build -t coderant.dev/example_server:latest -t "$IMAGE" "$BUILD_CONTEXT"
+if [ "$PUSH_IMAGE" = true ]; then
+  podman push "$IMAGE"
+fi
+```
+
+It might be useful to change something in `main.go` to make sure that the hashes get mangled, and then re-run `skaffold dev`
+
+## Some obvious issues & closing remarks
+Obviously, re-building the container each time is fairly impractical (unless the `Dockerfiles` are very well crafted).
+To address that, we'd use `skaffold`'s `sync:` directive, and some hooks that would run in the container post-sync 👍.
+
+I'll make sure to post something here soon to show how we can do just that!
+
+Thanks for reading!
