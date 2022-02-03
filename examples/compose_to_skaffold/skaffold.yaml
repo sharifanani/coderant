@@ -1,0 +1,14 @@
+apiVersion: skaffold/v2beta26
+kind: Config
+metadata:
+  name: compose-to-skaffold
+build:
+  artifacts:
+  - image: localhost:32000/example_server
+    context: go
+    custom:
+      buildCommand: ../build-container.sh
+deploy:
+  kubectl:
+    manifests:
+    - manifest.yaml
