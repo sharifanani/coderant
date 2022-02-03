@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: example
-        image: localhost:32000/example_server
+        image: localhost:32000/example_server:latest
         resources:
           requests:
             memory: "32Mi"
