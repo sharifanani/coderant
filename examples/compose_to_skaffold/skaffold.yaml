@@ -8,6 +8,17 @@ build:
     context: go
     custom:
       buildCommand: ../build-container.sh
+    sync:
+      manual:
+        - src: 'src/*'
+          dest: /app/
+          strip: 'src/'
+      hooks:
+        after:
+          - container:
+              command: ["go", "build", "-o", "./example_server", "main.go"]
+          - container:
+              command: ["supervisorctl", "restart", "all"]
 deploy:
   kubectl:
     manifests:
