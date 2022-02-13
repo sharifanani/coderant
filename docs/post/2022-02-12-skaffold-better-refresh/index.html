@@ -1,0 +1,316 @@
+<!doctype html><html lang=en-us>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>FileSync to speed up development workflows with Skaffold | CodeRant</title>
+<link rel=stylesheet href=../../css/style.css>
+<link rel=stylesheet href=../../css/fonts.css>
+<link href=//cdn.bootcss.com/highlight.js/9.12.0/styles/github.min.css rel=stylesheet>
+</head>
+<body class=page>
+<nav class=header>
+<div class=banner>
+<a href=../../ class=text>
+CodeRant
+</a>
+</div>
+<div class=head-meta>
+<span><a href=../../>&larr; Back to Home</a></span>
+<span class=date>2022-02-12</span>
+</div>
+</nav>
+<div class=container>
+<article>
+<div class=article-meta>
+<div class=categories>
+<a href=../../categories/containers>Containers</a>
+</div>
+<h1><span class=title>FileSync to speed up development workflows with Skaffold</span></h1>
+<h3 class=author>Sharif Anani
+</h3>
+<p>Tags: <a href=../../tags/docker>Docker</a>; <a href=../../tags/kubernetes>Kubernetes</a>; <a href=../../tags/podman>Podman</a>; <a href=../../tags/containers>Containers</a>; <a href=../../tags/skaffold>Skaffold</a>; <a href=../../tags/k8s>K8s</a>
+</p>
+</div>
+<nav id=TableOfContents>
+<ul>
+<li><a href=#before-reading-this-post>Before reading this post</a></li>
+<li><a href=#adding-filesync>Adding FileSync</a></li>
+<li><a href=#managing-the-server-process>Managing the server process</a>
+<ul>
+<li><a href=#adding-supervisor>Adding supervisor</a></li>
+<li><a href=#create-a-supervisor-config-file>Create a supervisor config file</a></li>
+<li><a href=#running-supervisor-instead-of-the-go-run>Running supervisor instead of the <code>go run</code></a></li>
+<li><a href=#add-post-sync-hooks>Add post-sync hooks</a></li>
+</ul>
+</li>
+</ul>
+</nav>
+<main>
+<h2 id=before-reading-this-post>Before reading this post</h2>
+<p>Before reading this post, check out <a href=../../post/2022-01-31-compose-to-skaffold>the previous post</a>
+to see how we got here.</p>
+<h2 id=adding-filesync>Adding FileSync</h2>
+<p><a href=https://skaffold.dev>Skaffold</a> watches for changes and rebuilds the containers by default. However, completely
+rebuilding the container can quickly become very impractical.</p>
+<p>To get around this, we can use the <a href=https://skaffold.dev/docs/pipeline-stages/filesync/>FileSync</a> to tell Skaffold to
+copy changes to an already-built container instead of rebuilding the whole thing.
+For our project from <a href=../../post/2022-01-31-compose-to-skaffold>the previous post</a>, this will be fairly simple:
+adjust your <code>skaffold.yaml</code> to look like the following:</p>
+<pre><code class=language-yaml>apiVersion: skaffold/v2beta26
+kind: Config
+metadata:
+  name: compose-to-skaffold
+build:
+  artifacts:
+  - image: localhost:32000/example_server
+    context: go
+    custom:
+      buildCommand: ../build-container.sh
+    sync:
+      manual:
+        - src: 'src/*'
+          dest: /app/
+          strip: 'src/'
+deploy:
+  kubectl:
+    manifests:
+      - manifest.yaml
+</code></pre>
+<p>After updating, go ahead and run <code>skaffold dev</code> from the project root, and then &ldquo;Hello there!&rdquo; in your <code>main.go</code> to
+&ldquo;Hello there! I&rsquo;ve changed!&rdquo;.</p>
+<p>The expected output should be something like the following:</p>
+<pre><code class=language-shell>$ skaffold dev
+Listing files to watch...
+ - localhost:32000/example_server
+Generating tags...
+ - localhost:32000/example_server -&gt; localhost:32000/example_server:d31182c-dirty
+Checking cache...
+ - localhost:32000/example_server: Found. Tagging
+Tags used in deployment:
+ - localhost:32000/example_server -&gt; localhost:32000/example_server:d31182c-dirty@sha256:4334fcc3418d4697cdcae28b2538339055d1413b3ce6b9f94071f7319df17efa
+Starting deploy...
+ - deployment.apps/example-deployment created
+ - service/example-backend-service created
+ - ingress.networking.k8s.io/example-backend-ingress created
+Waiting for deployments to stabilize...
+ - deployment/example-deployment is ready.
+Deployments stabilized in 2.07 seconds
+Press Ctrl+C to exit
+Watching for changes...
+[example] 2022/02/13 00:37:07 listening on: 0.0.0.0:8080 
+[example] 2022/02/13 00:37:12 received request
+##### this is what happens when a file is changed
+Syncing 1 files for localhost:32000/example_server:d31182c-dirty@sha256:4334fcc3418d4697cdcae28b2538339055d1413b3ce6b9f94071f7319df17efa
+Watching for changes...
+[example] 2022/02/13 00:37:21 received request
+</code></pre>
+<p>However, if you check the output, you still get</p>
+<pre><code class=language-shell>$ curl example-backend.local:8080/hello
+Hello there!⏎                                   
+</code></pre>
+<p>Why is that? It&rsquo;s because Skaffold is no longer doing a full rebuild, it&rsquo;s replacing the files in the already-built containers.
+However, because we&rsquo;re not restarting the container&rsquo;s <code>go run</code> command, we can&rsquo;t see the changes happening</p>
+<h2 id=managing-the-server-process>Managing the server process</h2>
+<p>When we created our container initially, our <code>Dockerfile</code> ended with</p>
+<pre><code class=language-dockerfile>CMD go run main.go -ip 0.0.0.0 -port 8080
+</code></pre>
+<p>In general, when a conntainers <code>CMD</code> (or command) exits, the container also exits. To facilitate a good workflow,
+we&rsquo;ll want our container command to be a long-running process (think daemon or service) that runs in the foreground and
+managed our web server.</p>
+<p>There are numerous solutions for this, and a tried-and-true one is <a href=http://supervisord.org/><code>supervisor</code></a>.
+To add <code>supervisord</code> to the container, we&rsquo;ll want to do a few things:</p>
+<ol>
+<li>Add <code>supervisor</code> to the build by updating the Dockerfile</li>
+<li>Create a <code>supervisor</code> config file to specify our job</li>
+<li>Change our <code>CMD</code> to run supervisor instead of <code>go run</code> directly.</li>
+<li>Add post-sync hooks to recompile the server and restart the process</li>
+</ol>
+<h3 id=adding-supervisor>Adding supervisor</h3>
+<p>Adding <code>supervisor</code> to the build is pretty simple; update the <code>Dockerfile</code> to include the <code>apt install</code> command:</p>
+<pre><code class=language-dockerfile>FROM docker.io/golang:stretch
+RUN apt-get update &amp;&amp; apt-get install -y supervisor
+COPY ./src /app
+WORKDIR /app/
+CMD go run main.go -ip 0.0.0.0 -port 8080
+</code></pre>
+<h3 id=create-a-supervisor-config-file>Create a supervisor config file</h3>
+<p>The <a href=http://supervisord.org/configuration.html><code>supervisord</code> documentation</a> is actually pretty good at laying out
+the available options and the minimum set of options needed to specify a job.
+Our job will be simple: run an executable with a certain command line, and dump all logs directly to <code>stdout</code> 👍</p>
+<p>Add the following to the file <code>go/supervisord.conf</code>, right next to your <code>Dockerfile</code>.
+I chose this location to keep it included in the context for easy copying.</p>
+<pre><code class=language-toml>[program:example_backend]
+command=./example_server -port 8080 -ip 0.0.0.0
+redirect_stderr=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+numprocs=1
+numprocs_start=0
+</code></pre>
+<p>Notice the <code>command</code> directive. It&rsquo;ll run the <code>example-server</code> command in the working directory with the <code>-ip</code> and <code>-port</code>
+options.</p>
+<h3 id=running-supervisor-instead-of-the-go-run>Running supervisor instead of the <code>go run</code></h3>
+<p>For the <code>command</code> specified in <code>supervisord.conf</code> to work, we&rsquo;re going to change how we build and run the server.
+We&rsquo;ll want to build the server during the container build and place the executable in the same working directory expected by
+supervisor, and we&rsquo;ll also want to place the <code>supervisord.conf</code> file to one of the directories that <code>supervisord</code> expects.</p>
+<p>The updated <code>Dockerfile</code> will look like the following:</p>
+<pre><code class=language-dockerfile>FROM docker.io/golang:stretch
+RUN apt-get update &amp;&amp; apt-get install -y supervisor
+COPY ./src /app
+WORKDIR /app/
+RUN go build -o ./example_server main.go
+COPY supervisord.conf /etc/supervisor/conf.d/example_backend.conf
+CMD supervisord -n -c /etc/supervisor/supervisord.conf
+</code></pre>
+<p>Notice that we now <code>RUN go build</code> instead of <code>CMD go run</code>. This compiles the server ahead of time for the first run.
+After that, we copy over the <code>supervisord.conf</code> file to <code>etc/supervisor/conf.d/example_backend.conf</code>. This directory
+is one of the default directories where supervisor will look for more configurations, and the whole directory is included
+as per the default configuration placed in <code>/etc/supervisor/supervisord.conf</code>. You can take a look at the default config file yourself:</p>
+<pre><code class=language-shell>$ podman run -it --rm localhost:32000/example_server:d31182c-dirty cat /etc/supervisor/supervisord.conf
+</code></pre>
+<pre><code class=language-toml>; supervisor config file
+
+[unix_http_server]
+file=/var/run/supervisor.sock   ; (the path to the socket file)
+chmod=0700                       ; sockef file mode (default 0700)
+
+[supervisord]
+logfile=/var/log/supervisor/supervisord.log ; (main log file;default $CWD/supervisord.log)
+pidfile=/var/run/supervisord.pid ; (supervisord pidfile;default supervisord.pid)
+childlogdir=/var/log/supervisor            ; ('AUTO' child log dir, default $TEMP)
+
+; the below section must remain in the config file for RPC
+; (supervisorctl/web interface) to work, additional interfaces may be
+; added by defining them in separate rpcinterface: sections
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[supervisorctl]
+serverurl=unix:///var/run/supervisor.sock ; use a unix:// URL  for a unix socket
+
+; The [include] section can just contain the &quot;files&quot; setting.  This
+; setting can list multiple files (separated by whitespace or
+; newlines).  It can also contain wildcards.  The filenames are
+; interpreted as relative to this file.  Included files *cannot*
+; include files themselves.
+
+[include]
+files = /etc/supervisor/conf.d/*.conf
+</code></pre>
+<p>Finally, we run <code>supervisor</code> with the line</p>
+<pre><code class=language-dockerfile>CMD supervisord -n -c /etc/supervisor/supervisord.conf
+</code></pre>
+<p>The <code>-n</code> option specifies that we want to run in the &ldquo;no daemon&rdquo; mode, which keeps supervisor running as a foreground
+process preventing the container from exiting, unless supervisor itself exits
+(which is less likely to happen, even if your code errors out).</p>
+<p>The <code>-c</code> options lets us specify the config to use.</p>
+<h3 id=add-post-sync-hooks>Add post-sync hooks</h3>
+<p>Skaffold&rsquo;s pretty good about offering to run scripts for you at different points in the lifecycle.
+The <a href=https://skaffold.dev/docs/pipeline-stages/lifecycle-hooks/>documentation</a> goes into details about the available hooks,
+but we&rsquo;ll be using the <a href=https://skaffold.dev/docs/pipeline-stages/lifecycle-hooks/#before-sync-and-after-sync><code>after-sync</code></a> hooks
+to do what we need.</p>
+<p>Add a <code>hooks</code> key to your <code>sync</code> key in <code>skaffold.yaml</code>:</p>
+<pre><code class=language-yaml>apiVersion: skaffold/v2beta26
+kind: Config
+metadata:
+  name: compose-to-skaffold
+build:
+  artifacts:
+  - image: localhost:32000/example_server
+    context: go
+    custom:
+      buildCommand: ../build-container.sh
+    sync:
+      manual:
+        - src: 'src/*'
+          dest: /app/
+          strip: 'src/'
+      hooks:
+        after:
+          - container:
+              command: [&quot;go&quot;, &quot;build&quot;, &quot;-o&quot;, &quot;./example_server&quot;, &quot;main.go&quot;]
+          - container:
+              command: [&quot;supervisorctl&quot;, &quot;restart&quot;, &quot;all&quot;]
+deploy:
+  kubectl:
+    manifests:
+    - manifest.yaml
+</code></pre>
+<p>The <code>after</code> key here means that we want this to happen after the sync is done, and the value is an array of <code>container</code>
+or <code>host</code> commands to run.</p>
+<p>Our first command re-compiles the executable:</p>
+<pre><code class=language-yaml>          - container:
+              command: [&quot;go&quot;, &quot;build&quot;, &quot;-o&quot;, &quot;./example_server&quot;, &quot;main.go&quot;]
+</code></pre>
+<p>And the second command restarts all supervisor programs:</p>
+<pre><code class=language-yaml>          - container:
+              command: [&quot;supervisorctl&quot;, &quot;restart&quot;, &quot;all&quot;]
+</code></pre>
+<p>That&rsquo;s all, folks! with all the changes in place, re-run <code>skaffold dev</code>, and notice what happens when you change a file:</p>
+<pre><code class=language-shell>$ skaffold dev
+Listing files to watch...
+ - localhost:32000/example_server
+Generating tags...
+ - localhost:32000/example_server -&gt; localhost:32000/example_server:d31182c
+Checking cache...
+ - localhost:32000/example_server: Found Remotely
+Tags used in deployment:
+ - localhost:32000/example_server -&gt; localhost:32000/example_server:d31182c@sha256:b6222d0291acdc41c68fe79f91c8b8259a9a2f73906a51861cfbaad137f6de05
+Starting deploy...
+ - deployment.apps/example-deployment created
+ - service/example-backend-service created
+ - ingress.networking.k8s.io/example-backend-ingress created
+Waiting for deployments to stabilize...
+ - deployment/example-deployment is ready.
+Deployments stabilized in 2.066 seconds
+Press Ctrl+C to exit
+Watching for changes...
+[example] 2022-02-13 01:17:44,266 CRIT Supervisor running as root (no user in config file)
+[example] 2022-02-13 01:17:44,266 INFO Included extra file &quot;/etc/supervisor/conf.d/example_backend.conf&quot; during parsing
+[example] 2022-02-13 01:17:44,276 INFO RPC interface 'supervisor' initialized
+[example] 2022-02-13 01:17:44,276 CRIT Server 'unix_http_server' running without any HTTP authentication checking
+[example] 2022-02-13 01:17:44,276 INFO supervisord started with pid 9
+[example] 2022-02-13 01:17:45,278 INFO spawned: 'example_backend' with pid 12
+[example] 2022/02/13 01:17:45 listening on: 0.0.0.0:8080 
+[example] 2022-02-13 01:17:46,283 INFO success: example_backend entered RUNNING state, process has stayed up for &gt; than 1 seconds (startsecs)
+[example] 2022/02/13 01:18:24 received request
+Syncing 1 files for localhost:32000/example_server:d31182c@sha256:b6222d0291acdc41c68fe79f91c8b8259a9a2f73906a51861cfbaad137f6de05
+Starting post-sync hooks for artifact &quot;localhost:32000/example_server&quot;...
+[example] example_backend: stopped
+[example] example_backend: started
+Completed post-sync hooks for artifact &quot;localhost:32000/example_server&quot;
+Watching for changes...
+[example] 2022/02/13 01:18:46 received request
+</code></pre>
+<p>Without having to restart skaffold, <code>curl</code>ing shows that we can see the changes</p>
+<pre><code class=language-shell>$ curl example-backend.local:8080/hello
+Hello there!⏎                                                                                                                                                                                                  anani@kubuntu ~/s/blog (refresh-without-build)&gt; curl example-backend.local:8080/hello
+$ curl example-backend.local:8080/hello
+Hello there! I've Changed!⏎
+</code></pre>
+</main>
+<nav class=post-nav>
+<span class=nav-prev></span>
+<span class=nav-next><a href=../../post/2022-01-31-compose-to-skaffold/>Moving a docker-compose workflow to Kubernetes with Skaffold &rarr;</a></span>
+</nav>
+</article>
+</div>
+<script async src=//yihui.org/js/center-img.js></script>
+<footer>
+<div class=footer>
+<ul class=menu>
+<li><a href=../../><span data-hover=Home>Home</span></a></li>
+<li><a href=../../categories/><span data-hover=Categories>Categories</span></a></li>
+<li><a href=../../tags/><span data-hover=Tags>Tags</span></a></li>
+<li><a href=../../index.xml><span data-hover=Subscribe>Subscribe</span></a></li>
+</ul>
+<div class=copyright>© Sharif Anani & Basel Anani 2021 | <a href=https://github.com/sharifanani>Github</a></div>
+</div>
+</footer>
+<script src=//yihui.org/js/math-code.js></script>
+<script async src="//mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+<script src=//cdn.bootcss.com/highlight.js/9.12.0/highlight.min.js></script>
+<script src=//cdn.bootcss.com/highlight.js/9.12.0/languages/r.min.js></script>
+<script>hljs.configure({languages:[]}),hljs.initHighlightingOnLoad()</script>
+</body>
+</html>

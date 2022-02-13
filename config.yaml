@@ -12,7 +12,7 @@ enableEmoji: true
 paginate: 6
 
 permalinks:
-  post: "/post/:year/:month/:day/:slug/"
+  post: "/post/:filename"
 
 menu:
   main:
@@ -44,3 +44,5 @@ markup:
   goldmark:
     renderer:
       unsafe: true
+publishDir: docs
+relativeUrls: true
