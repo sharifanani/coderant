@@ -1,3 +1,3 @@
 ---
-title: Home Page
+title: CodeRant | Home Page
 ---

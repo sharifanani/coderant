@@ -1,0 +1,363 @@
+<!doctype html><html lang=en-us>
+<head>
+<meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>How good of a substitute are protocol buffers to JSON? | CodeRant</title>
+<link rel=stylesheet href=../../css/style.css>
+<link rel=stylesheet href=../../css/fonts.css>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-75Y8PZ3TKD"></script>
+<script>var doNotTrack=!1;if(!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date),gtag('config','G-75Y8PZ3TKD',{anonymize_ip:!1})}</script>
+<script type=application/javascript>var doNotTrack=!1;doNotTrack||(window.ga=window.ga||function(){(ga.q=ga.q||[]).push(arguments)},ga.l=+new Date,ga('create','G-75Y8PZ3TKD','auto'),ga('send','pageview'))</script>
+<script async src=https://www.google-analytics.com/analytics.js></script>
+<link rel=stylesheet href=//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/styles/default.min.css>
+</head>
+<body class=page>
+<nav class=header>
+<div class=banner>
+<a href=../../ class=text>
+CodeRant
+</a>
+</div>
+<div class=head-meta>
+<span><a href=../../>&larr; Back to Home</a></span>
+<span class=date>2022-02-17</span>
+</div>
+</nav>
+<div class=container>
+<article>
+<div class=article-meta>
+<div class=categories>
+<a href=../../categories/communication>Communication</a>
+</div>
+<h1><span class=title>How good of a substitute are protocol buffers to JSON?</span></h1>
+<h3 class=author>Sharif Anani
+</h3>
+<p>Tags: <a href=../../tags/protobuf>Protobuf</a>; <a href=../../tags/protocol-buffers>Protocol Buffers</a>; <a href=../../tags/json>JSON</a>; <a href=../../tags/serialization>Serialization</a>; <a href=../../tags/code-generation>Code Generation</a>
+</p>
+</div>
+<nav id=TableOfContents>
+<ul>
+<li><a href=#why-are-we-here>Why are we here?</a></li>
+<li><a href=#what-are-we-going-to-do-with-protobufs>What are we going to do with protobufs?</a></li>
+<li><a href=#the-use-case>The use case</a></li>
+<li><a href=#the-go-server>The Go server</a></li>
+<li><a href=#hello-protobufs>Hello protobufs</a></li>
+<li><a href=#use-protobufs-to-write-to-disk>Use protobufs to write to disk</a></li>
+<li><a href=#what-next>What next?</a></li>
+</ul>
+</nav>
+<main>
+<h2 id=why-are-we-here>Why are we here?</h2>
+<p>Over the past year or two, I&rsquo;ve come within smelling distance of <a href=https://developers.google.com/protocol-buffers>Protocol Buffers</a>
+a few times, but I never actually got to touch them, do anything with them, or even contribute to a project where protocol
+buffers were being utilized. Figured writing a blog post about it is good enough reason to give it a shot!</p>
+<h2 id=what-are-we-going-to-do-with-protobufs>What are we going to do with protobufs?</h2>
+<p>In this post, we&rsquo;re going to try to use protocol buffers to encode data coming in on a network socket and write it to disk.</p>
+<h2 id=the-use-case>The use case</h2>
+<p>We have a hypothetical server, written in Go, and listens on a socket.
+We&rsquo;ll send some structured JSON data to the server in a format it is expecting, and will write that information to a file.
+Something like <code>./proto -listenTo sock1</code>. We&rsquo;ll use JSON as the first format, and then substitute it with protocol buffers
+and see how we like it. Throughout, we&rsquo;ll be using <code>socat</code> with the <code>ABSTRACT-CONNECT:&lt;string></code> option to send
+data to our server. Docs about <code>socat</code> usage are available <a href=http://www.dest-unreach.org/socat/doc/socat.html>here</a></p>
+<p>Shall we?</p>
+<h2 id=the-go-server>The Go server</h2>
+<p>Without further ado, our Go program is pretty simple here. The project hierarchy looks like:</p>
+<pre><code class=language-shell>.
+├── go
+│   ├── build
+│   ├── go.mod
+│   └── proto_demo
+│       └── main.go
+└── test_msg.json
+</code></pre>
+<p>I used <code>go mod init protobuf_demo_server</code> to create my module, but you can name yours whatever you want.</p>
+<p>And <code>main.go</code>:</p>
+<pre><code class=language-go>package main
+
+import (
+	&quot;bytes&quot;
+	&quot;encoding/json&quot;
+	&quot;flag&quot;
+	&quot;fmt&quot;
+	&quot;io&quot;
+	&quot;io/ioutil&quot;
+	&quot;log&quot;
+	&quot;net&quot;
+	&quot;os&quot;
+)
+
+type User struct {
+	Id   int    `json:&quot;id&quot;`
+	Name string `json:&quot;name&quot;`
+}
+
+type Message struct {
+	Id      int    `json:&quot;id&quot;`
+	Content string `json:&quot;content&quot;`
+	Sender  User   `json:&quot;sender&quot;`
+}
+
+var logger = log.Default()
+
+var tempFile *os.File = nil
+
+func getTempFile() (*os.File, error) {
+	var err error
+	if tempFile == nil {
+		tempFile, err = ioutil.TempFile(&quot;.&quot;, &quot;socket-&quot;)
+		if err != nil {
+			return nil, fmt.Errorf(&quot;error getting tempFile: %v\n&quot;, err)
+		}
+	}
+	return tempFile, nil
+}
+
+func writeToDisk(message *Message) error {
+	file, err := getTempFile()
+	if err != nil {
+		return fmt.Errorf(&quot;error getting temp file: %v\n&quot;, err)
+	}
+	err = file.Truncate(0)
+	if err != nil {
+		return err
+	}
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(file)
+	err = encoder.Encode(message)
+	if err != nil {
+		return fmt.Errorf(&quot;error decoding: %v\n&quot;, err)
+	}
+	return nil
+}
+
+func startSocketListener(address string) {
+	listener, err := net.Listen(&quot;unix&quot;, address)
+	if err != nil {
+		logger.Fatalf(&quot;error dialing socket: %v\n&quot;, err)
+	}
+	logger.Printf(&quot;Listening on socket %v\n&quot;, address)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			logger.Printf(&quot;error reading accepted connection: %v\n&quot;, err)
+			continue
+		}
+		content, err := io.ReadAll(conn)
+		if err != nil {
+			logger.Printf(&quot;error reading: %v\n&quot;, err)
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(content))
+		var msg Message
+		err = decoder.Decode(&amp;msg)
+		if err != nil {
+			logger.Printf(&quot;error decoding: %v\n&quot;, err)
+			continue
+		}
+		err = writeToDisk(&amp;msg)
+		if err != nil {
+			logger.Printf(&quot;error writing to disk: %v\n&quot;, err)
+			continue
+		}
+		fmt.Println(string(content))
+	}
+}
+
+func main() {
+	defer func() {
+		_ = tempFile.Close()
+	}()
+	// use an abstract namespace socket to avoid having to manage a file
+	listenIn := flag.String(&quot;listenTo&quot;, &quot;sock1&quot;, &quot;the name of the abstract namespace socket to listen on&quot;)
+	flag.Parse()
+	listenTo := fmt.Sprintf(&quot;@%s&quot;, *listenIn)
+	startSocketListener(listenTo)
+}
+</code></pre>
+<p>For the test message, I&rsquo;ll be using</p>
+<pre><code class=language-json>{&quot;id&quot;:0,&quot;content&quot;:&quot;Hello World!&quot;,&quot;sender&quot;:{&quot;id&quot;:0,&quot;name&quot;:&quot;robotHamster&quot;}}
+</code></pre>
+<p>Which I have saved in <code>test_msg.json</code>, but feel free to use whatever you want! Having it in a file will come in handy.</p>
+<p>We can build the server by running</p>
+<pre><code class=language-shell>$ go build -o ./build/proto proto_demo/main.go
+</code></pre>
+<p>And then do something like:</p>
+<pre><code class=language-shell>&gt; pwd
+/project/dir/go/build
+</code></pre>
+<pre><code class=language-shell>&gt; ./proto -listenTo sock1
+</code></pre>
+<p>Which will start the server and show you some output</p>
+<pre><code class=language-shell>2022/02/17 21:31:46 Listening on socket @sock1
+</code></pre>
+<p>In a separate terminal, run the following command:</p>
+<pre><code class=language-shell>$ cat test_msg.json | socat - ABSTRACT-CONNECT:sock1
+</code></pre>
+<p>Which pipes the contents of the file through <code>stdin</code> to the socket.</p>
+<p>In the same directory as your executable, you should now find a <code>sock-number</code> file, and its contents will be your message!</p>
+<pre><code class=language-shell>$ cat go/build/socket-1618341842
+{&quot;id&quot;:0,&quot;content&quot;:&quot;Hello World!&quot;,&quot;sender&quot;:{&quot;id&quot;:0,&quot;name&quot;:&quot;robotHamster&quot;}}
+</code></pre>
+<p>Cool! that was the easy part!</p>
+<h2 id=hello-protobufs>Hello protobufs</h2>
+<p>To start with protocol buffers, it may be useful to read some of the <a href=https://developers.google.com/protocol-buffers/docs/proto3>official documentation</a>
+if you haven&rsquo;t done so.</p>
+<p>In summary, protocol buffers are basically files describing a schema, and these files are used by the protocol buffer compiler
+(<code>protoc</code>) to generate software packages that allow you to create and manipulate objects abiding by said schema in different languages.</p>
+<p>Pretty fancy-sounding, eh?</p>
+<p>Let&rsquo;s go ahead and create <code>&lt;project-root>/my_message.proto</code> with the following contents:</p>
+<pre><code class=language-protobuf>syntax = &quot;proto3&quot;;
+
+option go_package = &quot;./my_message&quot;;
+
+message User {
+  int64 id = 1;
+  string name = 2;
+}
+
+message Message {
+  int64 id = 1;
+  string content = 2;
+  User sender = 3;
+}
+</code></pre>
+<p>In order to compile the protocol buffer into a go package, we&rsquo;ll want to install 2 things:</p>
+<ol>
+<li>
+<p><code>protoc</code>, which can be installed from binary distributions at <a href=https://github.com/protocolbuffers/protobuf/releases/>their GitHub page</a>.
+Make sure you download one of the <code>protoc-&lt;version>-&lt;os>-&lt;arch></code> releases, not the <code>protobuf-&lt;lang>-&lt;version></code> releases.
+I placed mine under <code>~/.local/share/bin/protoc</code>, but it should work as long as it&rsquo;s in one of the folders in your <code>PATH</code>.</p>
+</li>
+<li>
+<p>Because we&rsquo;re using Go, there&rsquo;s a separate dependency that would need to be installed with</p>
+</li>
+</ol>
+<pre><code class=language-shell>go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+</code></pre>
+<p>Alright. Once that&rsquo;s done, you can compile them with</p>
+<pre><code class=language-shell>$ protoc --go_out=./go/ my_message.proto
+</code></pre>
+<p>Then go into your <code>go/</code> folder and run <code>go mod tidy</code>. Your project now looks like this:</p>
+<pre><code class=language-shell>.
+├── go
+│   ├── build
+│   ├── go.mod
+│   ├── go.sum
+│   ├── my_message
+│   │   └── my_message.pb.go
+│   └── proto_demo
+│       └── main.go
+├── my_message.proto
+└── test_msg.json
+</code></pre>
+<p>We <em>could</em> take a look inside <code>my_message.pb.go</code>, but that kinda defeats the purpose, doesn&rsquo;t it? We&rsquo;ll leave it alone for now.</p>
+<h2 id=use-protobufs-to-write-to-disk>Use protobufs to write to disk</h2>
+<p>Now that we have everything in place, let&rsquo;s make the necessary changes to make our server write a protobuf-serialized
+version of our payload instead of the JSON one.</p>
+<p>We can do this by updating our <code>writeToDisk</code> function to be the following</p>
+<pre><code class=language-go>// new import 	&quot;protobuf_demo_server/my_message&quot;
+// new import	&quot;google.golang.org/protobuf/proto&quot;
+func writeToDisk(message *Message) error {
+	file, err := getTempFile()
+	if err != nil {
+		return fmt.Errorf(&quot;error getting temp file: %v\n&quot;, err)
+	}
+	err = file.Truncate(0)
+	if err != nil {
+		return err
+	}
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return err
+	}
+	msgAsProtobuf := my_message.Message{
+		Id:      int64(message.Id),
+		Content: message.Content,
+		Sender:  &amp;my_message.User{
+			Id:   int64(message.Sender.Id),
+			Name: message.Sender.Name,
+		},
+	}
+	buf, err := proto.Marshal(&amp;msgAsProtobuf)
+	if err != nil {
+		return fmt.Errorf(&quot;error marshaling: %v\n&quot;, err)
+	}
+	_, err = file.Write(buf)
+	if err != nil {
+		return fmt.Errorf(&quot;error writing: %v\n&quot;, err)
+	}
+	return nil
+}
+</code></pre>
+<p>Now, let&rsquo;s re-build and run our server again!</p>
+<pre><code class=language-shell>$ go build -o ./build/proto proto_demo/main.go
+$ ./build/proto -listenTo sock1
+2022/02/17 22:22:07 Listening on socket @sock1
+</code></pre>
+<p>And send it the same data again</p>
+<pre><code class=language-shell>$ cat test_msg.json | socat - ABSTRACT-CONNECT:sock1
+</code></pre>
+<p>If we take a look inside the new file, we&rsquo;ll see that it&rsquo;s encoded differently:</p>
+<pre><code>&gt; cat go/socket-74588476
+                                                                                                                                                                                                              Hello World�
+           robotHamster⏎
+</code></pre>
+<p>Hideous!</p>
+<p>We can actually get a better view by using <code>protoc</code>:</p>
+<pre><code class=language-shell>$ cat go/socket-74588476 | protoc --decode_raw
+1: 2
+2: &quot;Hello World!&quot;
+3 {
+  1: 300
+  2: &quot;robotHamster&quot;
+}
+
+</code></pre>
+<p>Or, if we really wanted to take a good look:</p>
+<pre><code class=language-shell>$ cat go/socket-74588476 | protoc --decode Message my_message.proto
+id: 2
+content: &quot;Hello World!&quot;
+sender {
+  id: 300
+  name: &quot;robotHamster&quot;
+}
+</code></pre>
+<p>You&rsquo;ll notice that in the last payload, I changed the IDs of the message and sender. If I left them as <code>0</code>, they would
+have been left out as those are the default values for their types. Super space efficient.</p>
+<h2 id=what-next>What next?</h2>
+<p>Next post, I think I&rsquo;ll create a python CLI that prompts the user for message information, builds it (in a protobuf),
+and sends it over to the go server.
+IMO that would help show how protobufs can be just as portable as JSON, while having the added benefit of less space
+usage, faster encode/decode, and unifying object definitions across languages.</p>
+<p>The code for this post is available on <a href=https://github.com/sharifanani/protobufs_demo>https://github.com/sharifanani/protobufs_demo</a>, and it&rsquo;ll be updated with the python CLI
+when that comes about 😁</p>
+</main>
+<nav class=post-nav>
+<span class=nav-prev></span>
+<span class=nav-next><a href=../../post/2022-02-12-skaffold-better-refresh/>FileSync to speed up development workflows with Skaffold &rarr;</a></span>
+</nav>
+</article>
+</div>
+<script async src=//yihui.org/js/center-img.js></script>
+<footer>
+<div class=footer>
+<ul class=menu>
+<li><a href=../../><span data-hover=Home>Home</span></a></li>
+<li><a href=../../categories/><span data-hover=Categories>Categories</span></a></li>
+<li><a href=../../tags/><span data-hover=Tags>Tags</span></a></li>
+<li><a href=../../index.xml><span data-hover=Subscribe>Subscribe</span></a></li>
+</ul>
+<div class=copyright>© Sharif Anani & Basel Anani 2021 | <a href=https://github.com/sharifanani>Github</a></div>
+</div>
+</footer>
+<script src=//yihui.org/js/math-code.js></script>
+<script async src="//mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+<script src=../../js/highlight.min.js></script>
+<script>hljs.configure({languages:[]}),hljs.initHighlightingOnLoad()</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-75Y8PZ3TKD"></script>
+<script>var doNotTrack=!1;if(!doNotTrack){window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag('js',new Date),gtag('config','G-75Y8PZ3TKD',{anonymize_ip:!1})}</script>
+</body>
+</html>
